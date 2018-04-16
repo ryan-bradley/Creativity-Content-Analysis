@@ -1,0 +1,340 @@
+---
+title: "A Creative-based Conversation Content Analysis by Ryan Bradley"
+output: html_notebook
+---
+
+Initially, required packages and custom functions need to be loaded into the environment
+```{r}
+library(tidyverse)
+library(irr)
+library(rel)
+
+waves_complete = 1
+
+read_files <- function(number_of_coders) {
+  data <- list()
+  files <- 0
+  for (i in 1:waves_complete) {
+    for (j in 1:number_of_coders) {
+      files <- files + 1
+      data[[files]] <- read_csv(paste0("coder_", j, "_wave_", i, ".csv"), col_types = cols()) %>%
+        mutate(Coder = j)
+    }
+  }
+  
+  data
+}
+
+extract_question_columns <- function(data_list) {
+  for (i in 1:length(data_list)) {
+    data <- data_list[[i]] 
+    columns <- (data.frame(names = colnames(data)) %>%
+      mutate(names = as.character(names),
+             isQuestion = startsWith(names, "Q"),
+             hasUnderscore = grepl("_", names)) %>%
+      filter(isQuestion == TRUE, hasUnderscore == FALSE))$names
+    
+    for (col in setdiff(colnames(data), columns)) {
+      data[col] <- NULL
+    }
+    
+    data_list[[i]] <- data %>% mutate(Coder = i)
+  }
+  
+  data_list
+}
+
+remove_question_text <- function(data_list) {
+  for (i in 1:length(data_list)) {
+    data <- data_list[[i]][3:nrow(data_list[[i]]), ]
+    
+    for (col in colnames(data)) {
+      data[col] <- as.numeric(data[[col]])
+    }
+    
+    data_list[[i]] <- data
+  }
+  
+  data_list
+}
+
+collapse_varaibles <- function(data_list, variables) {
+  for (i in 1:length(data_list)) {
+    data <- data_list[[i]]
+    for (j in 1:length(variables)) {
+      data[[names(variables[j])]] <- 0
+      
+      for (question in variables[[j]]) {
+        data[[names(variables[j])]] <- data[[names(variables[j])]] + data[[question]]
+        data[[question]] <- NULL
+      }
+      
+      data[[names(variables[j])]] <- ifelse(data[[names(variables[j])]] > 1, 1, data[[names(variables[j])]])
+    }
+  
+    data_list[[i]] <- data
+  }
+  
+  data_list
+}
+
+merge_coder_responses <- function(data_list, no_of_administrative = 2) {
+  number_of_coders <- length(data_list) 
+  number_of_questions <- length(colnames(data_list[[1]])) - no_of_administrative
+  
+  ids <- list()
+  for (i in 1:number_of_coders) {
+    ids[[i]] <- data_list[[i]]$Q1
+  }
+  
+  multiple <- vector()
+  for (i in 2:number_of_coders) {
+    if (i == 2) {
+      multiple <- ids[[i]][ids[[i]] %in% ids[[i-1]]]
+    } else {
+      multiple <- ids[[i]][ids[[i]] %in% multiple]
+    }
+  }
+  
+  for (id in multiple) {
+    coder <- sample(1:number_of_coders, 1)
+    for (i in 1:number_of_coders) {
+      if (i != coder) {
+        data_list[[i]] <- data_list[[i]] %>% filter(Q1 != id)
+      }
+    }
+  }
+  
+  data <- data.frame()
+  for (i in 1:number_of_coders) {
+    data <- data %>% bind_rows(data_list[[i]])
+  }
+  
+  data
+}
+
+reliability_responses <- function(data_list, no_of_administrative = 2) {
+  number_of_coders <- length(data_list) 
+  number_of_questions <- length(colnames(data_list[[1]])) - no_of_administrative
+  
+  for (i in 1:number_of_coders) {
+    data <- data_list[[i]]
+    names <- (data.frame(names = colnames(data)) %>%
+      mutate(names = as.character(names),
+             names = ifelse(row_number() > no_of_administrative, paste0(names, "_", i), names)))$names
+    
+    colnames(data) = names
+    
+    data_list[[i]] = data
+  }
+  
+  data <- data_list[[1]]
+  for (i in 2:number_of_coders) {
+    data <- data %>% merge(data_list[[i]], by = c("Q1", "Q2"))
+  }
+  
+  data <- data %>% rename(`1` = "Q1", `2` = "Q2")
+  
+  column_order <- colnames(data) %>% sort()
+  
+  data <- data %>% select(column_order)
+}
+
+chi_square_test <- function(stacked, grouping_column = 3, variable_columns = 4:7) {
+  results <- data_frame()
+  
+  for (i in variable_columns) {
+    temp <- stacked[grouping_column]
+    temp[[colnames(stacked)[i]]] <- stacked[[i]]
+    
+    temp <- table(temp)
+    
+    test <- suppressWarnings(chisq.test(temp))
+    temp <- data.frame(Variable = colnames(stacked)[i], "ChiSqu" = test$statistic, "DF" = test$parameter, "P-Value" = test$p.value) %>%
+      mutate(Significance = as.factor(symnum(`P.Value`, na = FALSE, 
+                     cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+                     symbols = c("***", "**", "*", ".", " "))))
+    results <- suppressMessages(bind_rows(results, temp))
+  }
+  
+  results
+}
+
+```
+
+***
+##1. Loading in the Data
+Now that our environment has been setup, lets read in the raw data files from Qualtrics for each coder
+
+```{r}
+data_list <- read_files(number_of_coders = 2)
+user_demographics <- read_csv("user_demographics.csv", col_types = cols())
+```
+
+Lets take a quick look at the first coders data file
+
+```{r}
+data_list[[1]]
+```
+
+***
+##2. Cleaning up the Data
+There seems to be a lot of data which is simply not needed for our purposes. The only variables that we need are the ones inputted by the coders.
+
+###2.1. Removing unwanted columns
+
+```{r}
+colnames(data_list[[1]])
+```
+
+Looking at the column names of all of the variables in the dataset, the only variables we need to keep are the *Q*uestion related variables. Using one of the custom functions loaded into the session, we can extract only these variables whilst removing the rest. Lets take another quick look at the first coders data after removing the unwanted variables.
+
+```{r}
+data_list <- extract_question_columns(data_list)
+data_list[[1]]
+```
+
+That looks much better!
+
+###2.2. Removing unwanted rows
+Now that the unwanted columns have been removed, its time to remove those weird values associated with the question text and convert the column values into numerical values instead of text. This is important because [ReCal](http://dfreelon.org/recal/) requires the data uploaded to be numerical
+
+
+```{r}
+data_list <- remove_question_text(data_list)
+data_list[[1]]
+```
+
+
+```{r}
+# #Temp R Code
+# data_list[[1]]$Q7 <- NULL
+# data_list[[2]]$Q7 <- NULL
+# 
+# data_list[[1]] <- data_list[[1]][1:70, ]
+# data_list[[2]] <- data_list[[2]][30:100, ]
+```
+###2.3. Collapse Variables
+As various questions have all been used to measure a single concept, these measures need to be combined by collapsing all of the variables associated with a single concept. The creativity concept was measured through `Questions 5-7` whilse the leadership concept was measured through `Questions 8 & 9`. Lets take a quick look, once again, after collapsing these columns.
+
+```{r}
+# if (iteration == 1) {
+#   variables <- list(Creativity = list("Q5", "Q6", "Q7"), Leadership = list("Q8", "Q9"))
+# } else if (iteration == 2) {
+#   variables <- list(Creativity = list("Q5", "Q6"), Leadership = list("Q8", "Q9"))
+# }
+
+variables <- list(Social = list("Q4"), Work = list("Q3"), Creativity = list("Q5", "Q6"), Leadership = list("Q8", "Q9"))
+
+data_list <- collapse_varaibles(data_list, variables)
+data_list[[1]]
+```
+
+***
+###2.4. Merging The Data Files
+
+Currently, each coders responses are in a seperate data file. Lets merge all of their responses into a single dataset which we can then use for analysis.
+
+```{r}
+reliability_data <- reliability_responses(data_list)
+(data <- merge_coder_responses(data_list))
+```
+
+***
+##4. Data Analysis
+????
+
+***
+###4.1. Calculating Inter-coder Reliability
+
+Now that all of the coders responses are in the same dataset, lets can compare each variable pairing for inter-coder reliability.
+
+```{r}
+reliability <- do.call(rbind, Map(data.frame, 
+                                  perc_agreement=list(
+                                    social = agree(reliability_data %>% select(9, 10))$value,
+                                    work = agree(reliability_data %>% select(11, 12))$value,
+                                    creativity = agree(reliability_data %>% select(5, 6))$value,
+                                    leadership = agree(reliability_data %>% select(7, 8))$value), 
+                                  kappa=list(
+                                    social = kappa2(reliability_data %>% select(9, 10))$value,
+                                    work = kappa2(reliability_data %>% select(11, 12))$value,
+                                    creativity = kappa2(reliability_data %>% select(5, 6))$value,
+                                    leadership = kappa2(reliability_data %>% select(7, 8))$value), 
+                                  alpha=list(
+                                    social = kripp.alpha(reliability_data %>% select(9, 10) %>% t())$value,
+                                    work = kripp.alpha(reliability_data %>% select(11, 12) %>% t())$value,
+                                    creativity = kripp.alpha(reliability_data %>% select(5, 6) %>% t())$value,
+                                    leadership = kripp.alpha(reliability_data %>% select(7, 8) %>% t())$value), 
+                                  pi=list(
+                                    social = spi(reliability_data %>% select(9, 10))$est,
+                                    work = spi(reliability_data %>% select(11, 12))$est,
+                                    creativity = spi(reliability_data %>% select(5, 6))$est,
+                                    leadership = spi(reliability_data %>% select(7, 8))$est),
+                                  gwet=list(
+                                    social = gac(reliability_data %>% select(9, 10), kat = 2)$est,
+                                    work = gac(reliability_data %>% select(11, 12), kat = 2)$est,
+                                    creativity = gac(reliability_data %>% select(5, 6), kat = 2)$est,
+                                    leadership = gac(reliability_data %>% select(7, 8), kat = 2)$est
+                                  )))
+reliability
+```
+
+###4.2 Descriptive Statistics
+Once the reliability measures have been calculated, the data can finally be analyzed to address the research questions of interest.
+The main research question of interest is whether or no creative based conversations are taking place through ESM technologies, if so, who?
+
+To determine the percentage of conversation content pieces which contain each variable of interest, simply taking the mean of each variable will determine the percentage for each of the variables. This is the case only because the coding utilized for these variables are 0 (when the variable is *not present*) and 1 (when the variable *is present*).
+```{r}
+data %>%
+  select(-1, -2) %>%
+  group_by(Coder) %>%
+  summarise_all(funs(mean))
+```
+
+###4.3 Tests of Independance
+A Chi Squared test is used determine if the occurence of these variables are truely independant. To do this, the coded data needs to be combined with the demographic data of each post's respective author.
+```{r}
+(data <- merge(data, user_demographics, by.x = "Q2", by.y = "userid"))
+```
+
+###4.3.1 By Country
+Firstly, a Chi-Squared test of independance for each variable of interest can be calculated for each Country. First, lets take a look at the number of occurences for the `Creativity` variable only with respect to `Country`.
+```{r}
+data %>% select(country, Creativity) %>% table()
+```
+
+Now, lets see if these are independant not just for the `Creativity` variable, but all variables in question with respect to country (Column 11).
+```{r}
+(results <- chi_square_test(data, grouping_column = 11))
+```
+
+Based on these results, the only variable which is almost statistically signifacantly different country independance is *Social* (`Q4`) with the P Value incredibly close yet, just above 0.05
+```{r}
+data %>% select(country, Creativity) %>% table()
+```
+
+This table shows the ratio between social and non-social posts is much higher for the United States in comparison to all of the other countries.
+
+###4.3.2 By Department
+In addation to a Chi-Squared test of independance for each variable of interest with respect to `Country`, are different `departments` more likely to engage in specific types of conversations. Like the section above, lets take a look at the number of occurences for the `Creativity` variable only but with respect to `department`.
+```{r}
+data %>% select(depart, Creativity) %>% table()
+```
+
+Now, lets see if these are independant not just for the `Creativity` variable, but all variables in question with respect to `Department` (Column 10).
+```{r}
+(results <- chi_square_test(data, grouping_column = 10))
+```
+
+Based on these results, the only variable which does not have statistically significantly different levels of independance between departments is *Leadership*. 
+```{r}
+data %>% select(depart, Leadership) %>% table()
+```
+This table shows the ratio between leadership and non-leadership posts being statistically difference regardless of the `department`. The ratio of `social` to non-social posts are however statistically significantly different between different `department`s.
+
+```{r}
+data %>% select(depart, Social) %>% table()
+```
+
+
