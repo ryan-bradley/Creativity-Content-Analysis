@@ -154,7 +154,7 @@ chi_square_test <- function(stacked, grouping_column = 3, variable_columns = 4:7
       mutate(Significance = as.factor(symnum(`P.Value`, na = FALSE, 
                      cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
                      symbols = c("***", "**", "*", ".", " "))))
-    results <- suppressMessages(bind_rows(results, temp))
+    results <- suppressWarnings(bind_rows(results, temp))
   }
   
   results
@@ -206,24 +206,10 @@ data_list[[1]]
 ```
 
 
-```{r}
-# #Temp R Code
-# data_list[[1]]$Q7 <- NULL
-# data_list[[2]]$Q7 <- NULL
-# 
-# data_list[[1]] <- data_list[[1]][1:70, ]
-# data_list[[2]] <- data_list[[2]][30:100, ]
-```
 ###2.3. Collapse Variables
 As various questions have all been used to measure a single concept, these measures need to be combined by collapsing all of the variables associated with a single concept. The creativity concept was measured through `Questions 5-7` whilse the leadership concept was measured through `Questions 8 & 9`. Lets take a quick look, once again, after collapsing these columns.
 
 ```{r}
-# if (iteration == 1) {
-#   variables <- list(Creativity = list("Q5", "Q6", "Q7"), Leadership = list("Q8", "Q9"))
-# } else if (iteration == 2) {
-#   variables <- list(Creativity = list("Q5", "Q6"), Leadership = list("Q8", "Q9"))
-# }
-
 variables <- list(Social = list("Q4"), Work = list("Q3"), Creativity = list("Q5", "Q6"), Leadership = list("Q8", "Q9"))
 
 data_list <- collapse_varaibles(data_list, variables)
@@ -295,7 +281,7 @@ data %>%
 ###4.3 Tests of Independance
 A Chi Squared test is used determine if the occurence of these variables are truely independant. To do this, the coded data needs to be combined with the demographic data of each post's respective author.
 ```{r}
-(data <- merge(data, user_demographics, by.x = "Q2", by.y = "userid"))
+data <- merge(data, user_demographics, by.x = "Q2", by.y = "userid")
 ```
 
 ###4.3.1 By Country
@@ -309,7 +295,7 @@ Now, lets see if these are independant not just for the `Creativity` variable, b
 (results <- chi_square_test(data, grouping_column = 11))
 ```
 
-Based on these results, the only variable which is almost statistically signifacantly different country independance is *Social* (`Q4`) with the P Value incredibly close yet, just above 0.05
+Based on these results, the only variable which is  statistically signifacantly different country independance is *Creativity* with the P-Value just below 0.05
 ```{r}
 data %>% select(country, Creativity) %>% table()
 ```
@@ -327,14 +313,10 @@ Now, lets see if these are independant not just for the `Creativity` variable, b
 (results <- chi_square_test(data, grouping_column = 10))
 ```
 
-Based on these results, the only variable which does not have statistically significantly different levels of independance between departments is *Leadership*. 
+Based on these results, there are no variables which are deemed to be statistically significantly different. However, based on the P-Values, the closest variable to being statistically significantly different is *Leadership*. 
 ```{r}
 data %>% select(depart, Leadership) %>% table()
 ```
-This table shows the ratio between leadership and non-leadership posts being statistically difference regardless of the `department`. The ratio of `social` to non-social posts are however statistically significantly different between different `department`s.
 
-```{r}
-data %>% select(depart, Social) %>% table()
-```
 
 
