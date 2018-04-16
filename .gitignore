@@ -1,3 +1,6 @@
+# Comma-separated value data files
+*.csv
+
 # History files
 .Rhistory
 .Rapp.history
