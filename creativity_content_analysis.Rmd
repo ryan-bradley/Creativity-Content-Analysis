@@ -9,9 +9,9 @@ library(tidyverse)
 library(irr)
 library(rel)
 
-waves_complete = 1
+waves_complete = 2
 
-read_files <- function(number_of_coders) {
+read_files <- function(number_of_coders = 2) {
   data <- list()
   files <- 0
   for (i in 1:waves_complete) {
@@ -34,11 +34,13 @@ extract_question_columns <- function(data_list) {
              hasUnderscore = grepl("_", names)) %>%
       filter(isQuestion == TRUE, hasUnderscore == FALSE))$names
     
+    columns <- c("Coder", columns)
+    
     for (col in setdiff(colnames(data), columns)) {
       data[col] <- NULL
     }
     
-    data_list[[i]] <- data %>% mutate(Coder = i)
+    data_list[[i]] <- data
   }
   
   data_list
@@ -46,13 +48,18 @@ extract_question_columns <- function(data_list) {
 
 remove_question_text <- function(data_list) {
   for (i in 1:length(data_list)) {
-    data <- data_list[[i]][3:nrow(data_list[[i]]), ]
-    
+    if (nrow(data_list[[i]]) < 3) {
+      data <- data.frame(matrix(ncol = length(data_list[[i]]), nrow = 0))
+      colnames(data) <- colnames(data_list[[i]])
+    } else {
+      data <- data_list[[i]][3:nrow(data_list[[i]]), ]
+    }
+      
     for (col in colnames(data)) {
       data[col] <- as.numeric(data[[col]])
     }
-    
-    data_list[[i]] <- data
+      
+    data_list[[i]] <- data %>% arrange(Q1)
   }
   
   data_list
@@ -78,17 +85,16 @@ collapse_varaibles <- function(data_list, variables) {
   data_list
 }
 
-merge_coder_responses <- function(data_list, no_of_administrative = 2) {
-  number_of_coders <- length(data_list) 
+merge_coder_responses <- function(data_list, no_of_administrative = 2, number_of_coders = 2) {
   number_of_questions <- length(colnames(data_list[[1]])) - no_of_administrative
   
   ids <- list()
-  for (i in 1:number_of_coders) {
+  for (i in 1:length(data_list)) {
     ids[[i]] <- data_list[[i]]$Q1
   }
   
   multiple <- vector()
-  for (i in 2:number_of_coders) {
+  for (i in 2:length(data_list)) {
     if (i == 2) {
       multiple <- ids[[i]][ids[[i]] %in% ids[[i-1]]]
     } else {
@@ -113,8 +119,7 @@ merge_coder_responses <- function(data_list, no_of_administrative = 2) {
   data
 }
 
-reliability_responses <- function(data_list, no_of_administrative = 2) {
-  number_of_coders <- length(data_list) 
+reliability_responses <- function(data_list, no_of_administrative = 2, number_of_coders = 2) {
   number_of_questions <- length(colnames(data_list[[1]])) - no_of_administrative
   
   for (i in 1:number_of_coders) {
@@ -272,10 +277,15 @@ The main research question of interest is whether or no creative based conversat
 
 To determine the percentage of conversation content pieces which contain each variable of interest, simply taking the mean of each variable will determine the percentage for each of the variables. This is the case only because the coding utilized for these variables are 0 (when the variable is *not present*) and 1 (when the variable *is present*).
 ```{r}
-data %>%
+check <- data_list[[1]]
+for (i in 2:length(data_list)) {
+  check <- check %>% bind_rows(data_list[[i]])
+}
+
+check %>%
   select(-1, -2) %>%
   group_by(Coder) %>%
-  summarise_all(funs(mean))
+  summarise_all(funs(mean), na.rm = T)
 ```
 
 ###4.3 Tests of Independance
@@ -287,7 +297,7 @@ data <- merge(data, user_demographics, by.x = "Q2", by.y = "userid")
 ###4.3.1 By Country
 Firstly, a Chi-Squared test of independance for each variable of interest can be calculated for each Country. First, lets take a look at the number of occurences for the `Creativity` variable only with respect to `Country`.
 ```{r}
-data %>% select(country, Creativity) %>% table()
+data %>% select(country, Leadership) %>% table()
 ```
 
 Now, lets see if these are independant not just for the `Creativity` variable, but all variables in question with respect to country (Column 11).
@@ -313,9 +323,9 @@ Now, lets see if these are independant not just for the `Creativity` variable, b
 (results <- chi_square_test(data, grouping_column = 10))
 ```
 
-Based on these results, there are no variables which are deemed to be statistically significantly different. However, based on the P-Values, the closest variable to being statistically significantly different is *Leadership*. 
+Based on these results, all variables  are deemed to be statistically significantly different. Lets take a look at the ratios for *Creativity*.
 ```{r}
-data %>% select(depart, Leadership) %>% table()
+data %>% select(depart, Creativity) %>% table()
 ```
 
 
