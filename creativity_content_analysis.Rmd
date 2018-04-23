@@ -85,7 +85,7 @@ collapse_varaibles <- function(data_list, variables) {
   data_list
 }
 
-merge_coder_responses <- function(data_list, no_of_administrative = 2, number_of_coders = 2) {
+merge_coder_responses <- function(data_list, no_of_administrative = 3, number_of_coders = 2) {
   number_of_questions <- length(colnames(data_list[[1]])) - no_of_administrative
   
   ids <- list()
@@ -98,13 +98,13 @@ merge_coder_responses <- function(data_list, no_of_administrative = 2, number_of
     if (i == 2) {
       multiple <- ids[[i]][ids[[i]] %in% ids[[i-1]]]
     } else {
-      multiple <- ids[[i]][ids[[i]] %in% multiple]
+      multiple <- c(multiple, ids[[i]][ids[[i]] %in% multiple])
     }
   }
   
   for (id in multiple) {
     coder <- sample(1:number_of_coders, 1)
-    for (i in 1:number_of_coders) {
+    for (i in 1:length(data_list)) {
       if (i != coder) {
         data_list[[i]] <- data_list[[i]] %>% filter(Q1 != id)
       }
@@ -112,7 +112,7 @@ merge_coder_responses <- function(data_list, no_of_administrative = 2, number_of
   }
   
   data <- data.frame()
-  for (i in 1:number_of_coders) {
+  for (i in 1:length(data_list)) {
     data <- data %>% bind_rows(data_list[[i]])
   }
   
@@ -291,7 +291,7 @@ check %>%
 ###4.3 Tests of Independance
 A Chi Squared test is used determine if the occurence of these variables are truely independant. To do this, the coded data needs to be combined with the demographic data of each post's respective author.
 ```{r}
-data <- merge(data, user_demographics, by.x = "Q2", by.y = "userid")
+data <- merge(data, user_demographics, by.x = "Q2", by.y = "userid", all.x = T)
 ```
 
 ###4.3.1 By Country
